@@ -1,13 +1,7 @@
-FROM python:3.11.4-slim as base
+FROM python:3.11.4-slim
 
-RUN useradd -ms /bin/bash python
-USER python
+WORKDIR /app
 
-RUN mkdir /home/python/proxy
-WORKDIR /home/python/proxy
+COPY . .
 
-COPY --chown=python:python . ./
-
-WORKDIR /home/python/proxy
-
-FROM base as production
+CMD [ "python3", "./main.py" ]
