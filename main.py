@@ -5,10 +5,13 @@ import time
 
 from utils import readVarInt, async_read_packet, decode_handshake
 
+BUFLEN = 256000
+RCVLEN = 256000
 listening = ('0.0.0.0', 25565)
 proxy_config: dict[str, tuple] = {
-    'test.a.local:25565': ('85.196.228.115', 25565),
-    'test.b.local:25565': ('146.158.101.170', 25565)
+    'test.a.local:25565': ('136.243.216.186', 25565),
+    'test.b.local:25565': ('146.158.101.170', 25565),
+    '192.168.10.1:25565': ('136.243.216.186', 25565),
 }
 
 class ProxyClient:
@@ -53,6 +56,8 @@ class ProxyClient:
             # print(f'config target addr: {target_addr}')
 
             await self._connect_target(target_addr)
+            self.sss.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, BUFLEN)
+            self.sss.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, BUFLEN)
             await self._loop.sock_sendall(self.sss, bytes(self.buffer))
             self.is_proxied = True
             return True
@@ -65,16 +70,25 @@ class ProxyClient:
         await self._loop.sock_connect(self.sss, target)
 
     async def proxy_css_sss(self):
-        while True:
-            res = await self._loop.sock_recv(self.css, 16384)
-            if not res: break
-            await self._loop.sock_sendall(self.sss, res)
+        try:
+            while True:
+                res = (await self._loop.sock_recv(self.css, RCVLEN))
+                print(f'aaaa L{len(res)} {type(res)}')
+                if not res: return
+                await self._loop.sock_sendall(self.sss, res)
+        except:
+            return
 
     async def proxy_sss_css(self):
-        while True:
-            res = await self._loop.sock_recv(self.sss, 16384)
-            if not res: break
-            await self._loop.sock_sendall(self.css, res)
+        try:
+            while True:
+                res = (await self._loop.sock_recv(self.sss, RCVLEN))
+                print(f'bbbb L{len(res)}')
+                if not res: return
+                await self._loop.sock_sendall(self.css, res)
+
+        except:
+            return
 
 class TCPServer:
     clients: list[ProxyClient]
@@ -85,6 +99,8 @@ class TCPServer:
     async def _handle_client(self, client: socket.socket):
         loop = asyncio.get_event_loop()
         proxy = ProxyClient(loop, client)
+        client.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, BUFLEN)
+        client.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, BUFLEN)
 
         self.clients.append(proxy)
         while True:
@@ -104,6 +120,7 @@ class TCPServer:
                 proxy.buffer += raw
                 await proxy.on_packet(packet)
             except Exception as e:
+                raise e
                 print(f'exc: generic: {str(e)}')
                 break
 
@@ -113,6 +130,9 @@ class TCPServer:
 
     async def _run_server(self):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, BUFLEN)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, BUFLEN)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.bind(listening)
         server.listen(100)
         server.setblocking(False)
