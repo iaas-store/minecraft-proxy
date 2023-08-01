@@ -44,7 +44,7 @@ async def async_read_packet(loop: AbstractEventLoop, s: socket.socket) -> tuple[
     packet = bytearray(await loop.sock_recv(s, value))
     raw += packet
 
-    print(f'[IN] L{value} DATA {packet.hex(" ")}')
+    # print(f'[IN] L{value} DATA {packet.hex(" ")}')
     return raw, packet
 
 def decode_handshake(buffer: bytearray) -> tuple[int, str, int]:

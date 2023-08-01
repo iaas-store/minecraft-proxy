@@ -1,4 +1,7 @@
 import asyncio, socket
+import json
+import threading
+import time
 
 from utils import readVarInt, async_read_packet, decode_handshake
 
@@ -23,6 +26,12 @@ class ProxyClient:
         self.buffer = bytearray()
         self.css = css
 
+    def __str__(self):
+        return json.dumps({
+            'css': self.css.getpeername(),
+            'sss': self.sss.getpeername() if self.sss else None,
+        })
+
     async def on_packet(self, packet):
         packet, p_id = readVarInt(packet)
 
@@ -30,8 +39,8 @@ class ProxyClient:
             pver, srv_addr, srv_port = decode_handshake(packet)
 
             target_addr = proxy_config.get(f"{srv_addr}:{srv_port}")
-            print(f'client [{self.css.getpeername()}] protocol[{pver}] target[{srv_addr}:{srv_port}]')
-            print(f'config target addr: {target_addr}')
+            # print(f'client [{self.css.getpeername()}] protocol[{pver}] target[{srv_addr}:{srv_port}]')
+            # print(f'config target addr: {target_addr}')
 
             await self._connect_target(target_addr)
             await self._loop.sock_sendall(self.sss, bytes(self.buffer))
@@ -53,43 +62,62 @@ class ProxyClient:
         while True:
             await self._loop.sock_sendall(self.css, await self._loop.sock_recv(self.sss, 16384))
 
-async def handle_client(client: socket.socket):
-    loop = asyncio.get_event_loop()
-    proxy = ProxyClient(loop, client)
-    while True:
-        if proxy.is_proxied:
-            c1 = proxy.proxy_css_sss()
-            c2 = proxy.proxy_sss_css()
+class TCPServer:
+    clients: list[ProxyClient]
+
+    def __init__(self):
+        self.clients = []
+
+    async def _handle_client(self, client: socket.socket):
+        loop = asyncio.get_event_loop()
+        proxy = ProxyClient(loop, client)
+
+        self.clients.append(proxy)
+        while True:
+            if proxy.is_proxied:
+                try:
+                    await asyncio.gather(
+                        proxy.proxy_css_sss(),
+                        proxy.proxy_sss_css()
+                    )
+                except Exception as e:
+                    print(f'asyncio.gather(c1, c2): {str(e)}')
+                    pass
+                break
+
             try:
-                await asyncio.gather(c1, c2)
+                raw, packet = await async_read_packet(loop, client)
+                proxy.buffer += raw
+                await proxy.on_packet(packet)
             except Exception as e:
-                print(f'asyncio.gather(c1, c2): {str(e)}')
-                pass
-            break
+                print(f'generic: {str(e)}')
+                break
 
-        try:
-            raw, packet = await async_read_packet(loop, client)
-            proxy.buffer += raw
-            await proxy.on_packet(packet)
-        except Exception as e:
-            print(f'generic: {str(e)}')
-            break
+            print('\n')
+        self.clients.remove(proxy)
 
-        print('\n')
+        client.close()
 
-    client.close()
+    async def _run_server(self):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(listening)
+        server.listen(100)
+        server.setblocking(False)
 
-async def run_server():
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind(listening)
-    server.listen(100)
-    server.setblocking(False)
+        loop = asyncio.get_event_loop()
 
-    loop = asyncio.get_event_loop()
+        while True:
+            client, _ = await loop.sock_accept(server)
+            loop.create_task(self._handle_client(client))
 
+    def start_server(self):
+        asyncio.run(self._run_server())
+
+
+
+if __name__ == "__main__":
+    tcp_server = TCPServer()
+    threading.Thread(target=tcp_server.start_server).start()
     while True:
-        client, _ = await loop.sock_accept(server)
-        loop.create_task(handle_client(client))
-
-asyncio.run(run_server())
-
+        print("Current clients:", [str(_) for _ in tcp_server.clients])
+        time.sleep(5)
