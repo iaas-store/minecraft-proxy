@@ -1,9 +1,25 @@
 import asyncio, socket
+import dataclasses
 import json
 import threading
 import time
 
 from utils import readVarInt, async_read_packet, decode_handshake
+
+
+# class Config:
+#     buf_len: int = 256000
+#     rcv_len: int = 256000
+#     proxy_config: dict[str, tuple] = {
+#         'test.a.local:25565': ('136.243.216.186', 25565),
+#     }
+#     listening: tuple = ('0.0.0.0', 25565)
+#
+#     def __init__(self, data: dict):
+#
+#
+
+
 
 BUFLEN = 256000
 RCVLEN = 256000
@@ -125,8 +141,8 @@ class TCPServer:
                 break
 
         self.clients.remove(proxy)
-
         client.close()
+
 
     async def _run_server(self):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -141,6 +157,7 @@ class TCPServer:
 
         while True:
             client, _ = await loop.sock_accept(server)
+            print(_)
             loop.create_task(self._handle_client(client))
 
     def start_server(self):
