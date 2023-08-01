@@ -27,9 +27,19 @@ class ProxyClient:
         self.css = css
 
     def __str__(self):
+        try:
+            css_name = self.css.getpeername()
+        except:
+            css_name = None
+
+        try:
+            sss_name = self.sss.getpeername()
+        except:
+            sss_name = None
+
         return json.dumps({
-            'css': self.css.getpeername(),
-            'sss': self.sss.getpeername() if self.sss else None,
+            'css': css_name,
+            'sss': sss_name,
         })
 
     async def on_packet(self, packet):
