@@ -22,7 +22,7 @@ def readVarInt(buffer: bytearray) -> tuple[bytearray, int]:
     return buffer, value
 
 
-async def async_read_packet(loop: AbstractEventLoop, s: socket.socket) -> tuple[bytearray, bytearray]:
+def read_packet(s: socket.socket) -> tuple[bytearray, bytearray]:
     SEGMENT_BITS = 0x7F
     CONTINUE_BIT = 0x80
 
@@ -31,7 +31,7 @@ async def async_read_packet(loop: AbstractEventLoop, s: socket.socket) -> tuple[
     raw = bytearray()
 
     while True:
-        currentByte = (await loop.sock_recv(s, 1))[0]
+        currentByte = s.recv(1)[0]
         raw += bytes([currentByte])
 
         value |= (currentByte & SEGMENT_BITS) << position
@@ -41,7 +41,7 @@ async def async_read_packet(loop: AbstractEventLoop, s: socket.socket) -> tuple[
 
         if position >= 32: raise RuntimeError("VarInt is too big");
 
-    packet = bytearray(await loop.sock_recv(s, value))
+    packet = bytearray(s.recv(value))
     raw += packet
 
     # print(f'[IN] L{value} DATA {packet.hex(" ")}')
