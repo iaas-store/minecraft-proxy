@@ -56,11 +56,15 @@ class ProxyClient:
 
     async def proxy_css_sss(self):
         while True:
-            await self._loop.sock_sendall(self.sss, await self._loop.sock_recv(self.css, 16384))
+            res = await self._loop.sock_recv(self.css, 16384)
+            if not res: break
+            await self._loop.sock_sendall(self.sss, res)
 
     async def proxy_sss_css(self):
         while True:
-            await self._loop.sock_sendall(self.css, await self._loop.sock_recv(self.sss, 16384))
+            res = await self._loop.sock_recv(self.sss, 16384)
+            if not res: break
+            await self._loop.sock_sendall(self.css, res)
 
 class TCPServer:
     clients: list[ProxyClient]
@@ -81,7 +85,7 @@ class TCPServer:
                         proxy.proxy_sss_css()
                     )
                 except Exception as e:
-                    print(f'asyncio.gather(c1, c2): {str(e)}')
+                    print(f'exc: asyncio.gather(c1, c2): {str(e)}')
                     pass
                 break
 
@@ -90,10 +94,9 @@ class TCPServer:
                 proxy.buffer += raw
                 await proxy.on_packet(packet)
             except Exception as e:
-                print(f'generic: {str(e)}')
+                print(f'exc: generic: {str(e)}')
                 break
 
-            print('\n')
         self.clients.remove(proxy)
 
         client.close()
@@ -118,6 +121,7 @@ class TCPServer:
 if __name__ == "__main__":
     tcp_server = TCPServer()
     threading.Thread(target=tcp_server.start_server).start()
+
     while True:
         print("Current clients:", [str(_) for _ in tcp_server.clients])
         time.sleep(5)
