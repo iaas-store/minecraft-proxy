@@ -1,0 +1,10 @@
+{
+  "proxy_host": "0.0.0.0",
+  "proxy_port": 30000,
+  "domains": {
+    "test.b.local": {
+      "target_host": "135.125.189.171",
+      "target_port": 25565
+    }
+  }
+}

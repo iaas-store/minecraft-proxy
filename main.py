@@ -1,137 +1,130 @@
-import asyncio, socket
+import asyncio
 import json
-import threading
-import time
 
-from utils import readVarInt, async_read_packet, decode_handshake
 
-listening = ('0.0.0.0', 25565)
-proxy_config: dict[str, tuple] = {
-    'test.a.local:25565': ('85.196.228.115', 25565),
-    'test.b.local:25565': ('146.158.101.170', 25565)
-}
+class Config:
+    def __init__(self, config_file):
+        with open(config_file, "r") as f:
+            self.__dict__ = json.load(f)
 
-class ProxyClient:
-    _loop: asyncio.AbstractEventLoop
 
-    css: socket.socket
-    sss: socket.socket
+class MinecraftProxy:
+    def __init__(self, config):
+        self.config = config
 
-    buffer: bytearray
-    is_proxied: bool
+    async def handle_client(self, client_reader, client_writer):
+        client_info = client_writer.get_extra_info("peername")
 
-    def __init__(self, loop: asyncio.AbstractEventLoop, css):
-        self._loop = loop
-        self.is_proxied = False
-        self.buffer = bytearray()
-        self.css = css
+        print(f"Client {client_info} connected")
 
-    def __str__(self):
+        # Читаем и анализируем пакет рукопожатия
+        packet_length = await self.read_varint(client_reader)
+        packet_id = await self.read_varint(client_reader)
+        if packet_id != 0x00:
+            raise Exception("Expected handshake packet")
+
+        protocol_version = await self.read_varint(client_reader)
+        server_address = await self.read_string(client_reader)
+        server_port = await self.read_ushort(client_reader)
+        next_state = await self.read_varint(client_reader)
+
+        # Проверяем доменное имя
+        if server_address not in self.config.domains:
+            raise Exception("Invalid domain")
+
+        target = self.config.domains[server_address]
+        server_reader, server_writer = await asyncio.open_connection(
+            target["target_host"], target["target_port"]
+        )
+
+        # Перенаправляем пакет рукопожатия на сервер
+        await self.write_varint(server_writer, packet_length)
+        await self.write_varint(server_writer, packet_id)
+        await self.write_varint(server_writer, protocol_version)
+        await self.write_string(server_writer, server_address)
+        await self.write_ushort(server_writer, server_port)
+        await self.write_varint(server_writer, next_state)
+
+        # Перенаправляем все остальные пакеты
         try:
-            css_name = self.css.getpeername()
-        except:
-            css_name = None
+            await asyncio.gather(
+                self.pipe(client_reader, server_writer),
+                self.pipe(server_reader, client_writer),
+            )
+        except ConnectionResetError:
+            pass
+        finally:
+            print(f"Client {client_info} disconnected")
+            client_writer.close()
+            server_writer.close()
 
-        try:
-            sss_name = self.sss.getpeername()
-        except:
-            sss_name = None
-
-        return json.dumps({
-            'css': css_name,
-            'sss': sss_name,
-        })
-
-    async def on_packet(self, packet):
-        packet, p_id = readVarInt(packet)
-
-        if p_id == 0 and len(packet) > 2:
-            pver, srv_addr, srv_port = decode_handshake(packet)
-
-            target_addr = proxy_config.get(f"{srv_addr}:{srv_port}")
-            # print(f'client [{self.css.getpeername()}] protocol[{pver}] target[{srv_addr}:{srv_port}]')
-            # print(f'config target addr: {target_addr}')
-
-            await self._connect_target(target_addr)
-            await self._loop.sock_sendall(self.sss, bytes(self.buffer))
-            self.is_proxied = True
-            return True
-
-        return None
-
-    async def _connect_target(self, target: tuple[str, int]):
-        address, port = target
-        self.sss = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        await self._loop.sock_connect(self.sss, target)
-
-    async def proxy_css_sss(self):
+    async def pipe(self, reader, writer):
         while True:
-            res = await self._loop.sock_recv(self.css, 16384)
-            if not res: break
-            await self._loop.sock_sendall(self.sss, res)
-
-    async def proxy_sss_css(self):
-        while True:
-            res = await self._loop.sock_recv(self.sss, 16384)
-            if not res: break
-            await self._loop.sock_sendall(self.css, res)
-
-class TCPServer:
-    clients: list[ProxyClient]
-
-    def __init__(self):
-        self.clients = []
-
-    async def _handle_client(self, client: socket.socket):
-        loop = asyncio.get_event_loop()
-        proxy = ProxyClient(loop, client)
-
-        self.clients.append(proxy)
-        while True:
-            if proxy.is_proxied:
-                try:
-                    await asyncio.gather(
-                        proxy.proxy_css_sss(),
-                        proxy.proxy_sss_css()
-                    )
-                except Exception as e:
-                    print(f'exc: asyncio.gather(c1, c2): {str(e)}')
-                    pass
-                break
-
             try:
-                raw, packet = await async_read_packet(loop, client)
-                proxy.buffer += raw
-                await proxy.on_packet(packet)
-            except Exception as e:
-                print(f'exc: generic: {str(e)}')
+                data = await reader.read(4096)
+                if not data:
+                    break
+                writer.write(data)
+                await writer.drain()
+            except ConnectionResetError:
                 break
 
-        self.clients.remove(proxy)
-
-        client.close()
-
-    async def _run_server(self):
-        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.bind(listening)
-        server.listen(100)
-        server.setblocking(False)
-
-        loop = asyncio.get_event_loop()
-
+    async def read_varint(self, reader):
+        num_read = 0
+        result = 0
         while True:
-            client, _ = await loop.sock_accept(server)
-            loop.create_task(self._handle_client(client))
+            byte = await reader.readexactly(1)
+            byte = byte[0]
+            value = byte & 0b01111111
+            result |= value << (7 * num_read)
 
-    def start_server(self):
-        asyncio.run(self._run_server())
+            num_read += 1
+            if num_read > 5:
+                raise Exception("VarInt is too big")
 
+            if (byte & 0b10000000) == 0:
+                break
+
+        return result
+
+    async def read_string(self, reader):
+        length = await self.read_varint(reader)
+        string_data = await reader.readexactly(length)
+        return string_data.decode("utf-8")
+
+    async def read_ushort(self, reader):
+        ushort_data = await reader.readexactly(2)
+        return int.from_bytes(ushort_data, byteorder="big")
+
+    async def write_varint(self, writer, value):
+        while True:
+            byte = value & 0b01111111
+            value >>= 7
+            if value != 0:
+                byte |= 0b10000000
+            writer.write(bytes([byte]))
+            if value == 0:
+                break
+        await writer.drain()
+
+    async def write_string(self, writer, value):
+        string_data = value.encode("utf-8")
+        await self.write_varint(writer, len(string_data))
+        writer.write(string_data)
+        await writer.drain()
+
+    async def write_ushort(self, writer, value):
+        ushort_data = value.to_bytes(2, byteorder="big")
+        writer.write(ushort_data)
+        await writer.drain()
+
+    async def start(self, host, port):
+        server = await asyncio.start_server(self.handle_client, host, port)
+        async with server:
+            await server.serve_forever()
 
 
 if __name__ == "__main__":
-    tcp_server = TCPServer()
-    threading.Thread(target=tcp_server.start_server).start()
-
-    while True:
-        print("Current clients:", [str(_) for _ in tcp_server.clients])
-        time.sleep(5)
+    config = Config("config.json")
+    proxy = MinecraftProxy(config)
+    asyncio.run(proxy.start(config.proxy_host, config.proxy_port))
