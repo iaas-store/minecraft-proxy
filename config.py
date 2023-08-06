@@ -8,7 +8,7 @@ class Config:
     proxy_port: int
     domains: dict[str, dict[str, str | int]]
 
-    _last_update: str
+    _last_update: float
 
     def __init__(self):
         self.load()
