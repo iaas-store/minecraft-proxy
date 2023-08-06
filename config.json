@@ -8,7 +8,7 @@
     },
     "test.b.local": {
       "target_host": "136.243.216.186",
-      "target_port": 25565
+      "target_port": 25561
     }
   }
 }
